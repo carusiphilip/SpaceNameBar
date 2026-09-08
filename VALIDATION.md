@@ -24,5 +24,5 @@ The normal app does not save or print a diagnostic log. Machine-specific Space I
 - Added continuous Desktop N numbering including full-screen Spaces.
 - Added optional Mission Control desktop-name and window-title overlays, gated by Accessibility permission.
 - Added a coordinate conversion/placement check for multiple display arrangements (nine core checks total).
-- Accessibility-dependent event delivery and actual preview labels still require live verification after the user grants permission. Building successfully is not proof of end-to-end Mission Control compatibility.
+- After Accessibility was granted, the installed app reported 17 desktop labels and changing counts of 2–3 window titles through its live UI. Both F3 switches were on, confirming permission recognition, event delivery, and label generation. The menu was also visually inspected. Exact overlay alignment and click-through behavior have not yet been visually verified in Mission Control.
 - Workspace snapshot/restore remains unimplemented; launch at login only starts SpaceNameBar.
