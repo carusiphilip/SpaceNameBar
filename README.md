@@ -61,6 +61,7 @@ The editor rechecks the visible Space before saving. If it changed mid-edit, the
 
 ```sh
 swift run SpaceNameCoreChecks
+./scripts/check-startup.sh
 ./scripts/build.sh
 ./dist/SpaceNameBar.app/Contents/MacOS/SpaceNameBar --diagnose
 ```
@@ -75,14 +76,30 @@ Manual checks for a macOS update:
 4. Check full-screen Spaces, sleep/wake, and any external displays you use.
 5. Enable launch at login, log out/in, and confirm startup. If macOS requests approval, allow SpaceNameBar in System Settings → General → Login Items & Extensions.
 
-## Launch at login and restoring a workspace
+## Saved startup apps
 
-**Launch at login starts SpaceNameBar only.** It does not capture or reopen the other apps, tabs, documents, or terminal jobs on a desktop. Workspace snapshot/restore is not implemented in this version.
+**Save current apps** records the currently running desktop apps and backs up all custom Space names. It also enables **Launch at login** and **Reopen saved apps at login**. Save again when you want to replace the startup app list. Ordinary menu-bar name edits still save immediately to UserDefaults.
 
-macOS offers **Reopen windows when logging back in** in its restart/logout dialog. App settings also affect which windows reopen. This is not a guarantee of restoring every window to its old Space, and terminal processes do not survive a restart. See [Apple's explanation](https://support.apple.com/en-ie/102318).
+After a new login or reboot, SpaceNameBar starts automatically, waits 15 seconds for macOS session restoration, and opens any saved apps that are not already running. It does not send another open event to apps macOS has already restored. Failed launches have a 30-second timeout and at most three attempts; a local receipt records failures. **Reopen saved apps** lets you retry manually.
+
+Automatic restoration runs once per login session, even if SpaceNameBar is quit and relaunched. Disabling **Launch at login** also disables automatic app restoration. The service starts from the app delegate; opening the menu is not required.
+
+**This restores app launches, not an exact window layout.** Browser tabs, documents, terminal windows, full-screen arrangements, and placement on particular Spaces depend on macOS and each app's own session restoration. SpaceNameBar does not recreate those windows or move them between Spaces. Terminal jobs do not survive reboot and are never automatically rerun. If macOS recreates a Space with a new UUID, its old label cannot be safely assigned to it automatically.
+
+macOS offers **Reopen windows when logging back in** in its restart/logout dialog, and individual app settings also affect restoration. See [Apple's explanation](https://support.apple.com/en-ie/102318).
+
+The app list, Space metadata and name backup are stored locally in `~/Library/Application Support/SpaceNameBar/startup.json`. A previous snapshot is kept as `startup.previous.json` when you save again; progress is in `startup-receipt.json`. Files are owner-only (`0600`) in an owner-only directory (`0700`), with atomic writes. No snapshot, app paths or custom names are uploaded to GitHub or sent over the network.
+
+The startup checks cover disk persistence, duplicate avoidance, retry limits, failures, new boot/login handling, crash recovery, private file permissions and backups. `scripts/check-startup.sh` builds an isolated, windowless test app and verifies actual launches plus the automatic startup controller using simulated new sessions. It doesn't restart the Mac or close the user's apps. A real reboot is not part of these tests.
+
+Diagnostics (print counts/status only):
+
+```sh
+~/Applications/SpaceNameBar.app/Contents/MacOS/SpaceNameBar --startup-status
+```
 
 ## Uninstall
 
-Turn off **Launch at login**, quit the app, then move `~/Applications/SpaceNameBar.app` to the Trash. Labels stay in UserDefaults unless you explicitly remove the `com.carusiphilip.SpaceNameBar` preference domain.
+Turn off **Reopen saved apps at login** and **Launch at login**, quit the app, then move `~/Applications/SpaceNameBar.app` to the Trash. Labels stay in UserDefaults unless you explicitly remove the `com.carusiphilip.SpaceNameBar` preference domain. Startup snapshots remain in the local Application Support folder until you remove them.
 
 Author: **Philip Carusi**. Copyright © 2026 Philip Carusi.

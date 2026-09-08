@@ -25,4 +25,17 @@ The normal app does not save or print a diagnostic log. Machine-specific Space I
 - Added optional Mission Control desktop-name and window-title overlays, gated by Accessibility permission.
 - Added a coordinate conversion/placement check for multiple display arrangements (nine core checks total).
 - After Accessibility was granted, the installed app reported 17 desktop labels and changing counts of 2–3 window titles through its live UI. Both F3 switches were on, confirming permission recognition, event delivery, and label generation. The menu was also visually inspected. Exact overlay alignment and click-through behavior have not yet been visually verified in Mission Control.
-- Workspace snapshot/restore remains unimplemented; launch at login only starts SpaceNameBar.
+- In version 1.1, workspace snapshot/restore was unimplemented; launch at login only started SpaceNameBar.
+
+## Version 1.2 — saved startup apps
+
+Passed:
+
+- Core startup persistence, deduplication, owner-only file permissions, retry limits, failure reporting, same-session suppression, simulated new-boot restore, crash attempt limits, snapshot backups and corruption detection.
+- Real launch integration using a disposable native test app: launch, skip while running, terminate only the test app, and relaunch for a simulated new login.
+- The production startup controller's delayed automatic path, invoked through the same eager entry point used at app startup, without opening a menu. A second controller in the same simulated session did not launch again.
+- Reading the real login session identifier and kernel boot timestamp.
+- Release build/signature verification; installed app captured the current app list and custom names.
+- A fresh process reloaded that snapshot and confirmed startup restore and the login item were enabled. Saved names were compared against UserDefaults and matched exactly; snapshot permissions were verified.
+
+Not claimed or tested: a real reboot/logout, every third-party app's session restoration, exact window/Space placement, recreation of full-screen/Split View layouts, or resumption of terminal jobs. This release restores app launches and keeps name backups; it does not implement exact window layout restoration.

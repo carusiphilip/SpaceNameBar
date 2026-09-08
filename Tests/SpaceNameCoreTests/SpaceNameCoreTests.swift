@@ -101,7 +101,7 @@ func overlayCoordinatesWorkAcrossDisplays() {
 
 @main
 struct CoreChecks {
-    static func main() throws {
+    @MainActor static func main() async throws {
         labelsFollowUUIDAcrossReorderingAndNewSessionIDs()
         fullscreenSharesTheDesktopNumberSequence()
         multipleDisplaysRequireAnUnambiguousTarget()
@@ -112,5 +112,6 @@ struct CoreChecks {
         labelLimitsPreserveEmojiAndRemoveNewlines()
         overlayCoordinatesWorkAcrossDisplays()
         print("Passed all 9 SpaceNameCore checks.")
+        try await startupChecks()
     }
 }

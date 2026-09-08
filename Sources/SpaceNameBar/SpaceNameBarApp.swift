@@ -1,16 +1,16 @@
 import AppKit
 import SwiftUI
 import SpaceNameCore
+import ServiceManagement
 
 @main
 struct SpaceNameBarApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
     @StateObject private var model = SpaceModel()
-    @StateObject private var missionControl = MissionControlLabels()
 
     var body: some Scene {
         MenuBarExtra {
-            SpaceEditor(model: model, missionControl: missionControl)
+            SpaceEditor(model: model, missionControl: delegate.missionControl, startup: delegate.startup)
         } label: {
             Text(model.title)
                 .help(model.title)
@@ -22,8 +22,47 @@ struct SpaceNameBarApp: App {
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    let startup = StartupController(autoStart: false)
+    let missionControl = MissionControlLabels()
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
+        if CommandLine.arguments.contains("--startup-status") {
+            print("Saved apps: \(startup.snapshot?.apps.count ?? 0)")
+            print("Backed-up custom names: \(startup.snapshot?.labels.count ?? 0)")
+            print("Startup restore enabled: \(startup.enabled)")
+            print("Login item enabled: \(SMAppService.mainApp.status == .enabled)")
+            print("F3 Accessibility enabled: \(missionControl.trusted)")
+            NSApp.terminate(nil)
+            return
+        }
+        if CommandLine.arguments.contains("--save-startup") {
+            do {
+                try startup.captureAndEnable()
+                UserDefaults.standard.synchronize()
+                print(startup.status)
+                print("Startup restore enabled: \(startup.enabled)")
+                NSApp.terminate(nil)
+            } catch {
+                fputs("SpaceNameBar: \(error.localizedDescription)\n", stderr)
+                exit(1)
+            }
+            return
+        }
+        #if DEBUG
+        if let index = CommandLine.arguments.firstIndex(of: "--check-startup-launch"), CommandLine.arguments.count > index + 1 {
+            let fixtureURL = URL(fileURLWithPath: CommandLine.arguments[index + 1])
+            Task { @MainActor in
+                do {
+                    try await StartupIntegrationChecks.run(fixtureURL: fixtureURL)
+                    NSApp.terminate(nil)
+                } catch {
+                    fputs("Startup integration check failed: \(error.localizedDescription)\n", stderr)
+                    exit(1)
+                }
+            }
+            return
+        }
+        #endif
         if CommandLine.arguments.contains("--diagnose") {
             do {
                 let snapshot = try SpaceDetector().snapshot()
@@ -36,13 +75,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 fputs("SpaceNameBar: \(error.localizedDescription)\n", stderr)
                 exit(1)
             }
+            return
         }
+        // Start eagerly at login; opening the menu must never be required for restoration.
+        startup.start()
     }
 }
 
 private struct SpaceEditor: View {
     @ObservedObject var model: SpaceModel
     @ObservedObject var missionControl: MissionControlLabels
+    @ObservedObject var startup: StartupController
     @State private var draft = ""
     @State private var editingID: String?
     @State private var saveError: String?
@@ -50,6 +93,7 @@ private struct SpaceEditor: View {
     @State private var windowAccess = EditorWindowAccess()
 
     var body: some View {
+        ScrollView {
         VStack(alignment: .leading, spacing: 16) {
             HStack(spacing: 10) {
                 Image(systemName: "rectangle.3.group")
@@ -111,10 +155,30 @@ private struct SpaceEditor: View {
             }
             .toggleStyle(.switch).controlSize(.small)
             Divider()
-            Toggle("Launch at login", isOn: Binding(get: { model.loginEnabled }, set: { model.setLoginEnabled($0) }))
+            Toggle("Launch at login", isOn: Binding(get: { model.loginEnabled }, set: {
+                if !$0 { startup.setEnabled(false) }
+                model.setLoginEnabled($0)
+            }))
                 .toggleStyle(.switch).controlSize(.small)
-            Text("Starts SpaceNameBar. Does not restore other apps or windows.")
-                .font(.caption).foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Saved startup apps").font(.subheadline.weight(.semibold))
+                Toggle("Reopen saved apps at login", isOn: Binding(get: { startup.enabled }, set: {
+                    startup.setEnabled($0); model.refreshLoginStatus()
+                }))
+                    .toggleStyle(.switch).controlSize(.small)
+                    .disabled(startup.snapshot == nil)
+                HStack {
+                    Button("Save current apps") { startup.saveCurrentApps(); model.refreshLoginStatus() }
+                    Spacer()
+                    Button("Reopen saved apps") { startup.restoreNow() }
+                        .disabled(startup.snapshot == nil || startup.busy)
+                }
+                Text(startup.status).font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text("Apps reopen; tabs, documents and desktop placement depend on each app. Terminal jobs do not resume.")
+                    .font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             if let loginError = model.loginError {
                 Text(loginError).font(.caption).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -127,7 +191,8 @@ private struct SpaceEditor: View {
             }
         }
         .padding(20)
-        .frame(width: 340)
+        }
+        .frame(width: 380, height: 620)
         .background(EditorWindowReader(access: windowAccess, onOpen: { prepareEditor() }))
         .onAppear { prepareEditor() }
         .onChange(of: model.current?.id) { _ in loadDraft() }

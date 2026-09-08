@@ -3,3 +3,8 @@ dist/
 .DS_Store
 .swiftpm/
 *.xcuserstate
+startup.json
+startup.previous.json
+startup-receipt.json
+*.log
+.local/
