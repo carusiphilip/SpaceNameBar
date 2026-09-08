@@ -19,9 +19,9 @@ The menu has separate **Desktop names** and **Window titles** switches. Click **
 
 The app draws click-through labels at the positions exposed by Mission Control: custom names (or Desktop N) on Space thumbnails, and existing window titles on individual window previews. It does not change other apps' titles or modify the Dock. Windows remain clickable and draggable through the overlay.
 
-**This integration is experimental.** Live Accessibility event delivery and label generation have been checked; exact overlay alignment and click-through behavior still need visual verification in Mission Control. Mission Control's accessibility structure is undocumented. Labels are shown only for thumbnails the Dock exposes with usable positions; unsupported/missing window titles cannot be reconstructed. The app doesn't guess a Space's name if thumbnail counts do not match. Full-screen Spaces have the same Desktop N naming as ordinary Spaces.
+**This integration is experimental.** Live Accessibility event delivery, label generation and visible labels after repeated Mission Control openings have been checked. Exact alignment across other display arrangements and click-through behavior still need broader verification. Mission Control's accessibility structure is undocumented. Labels are shown only for thumbnails the Dock exposes with usable positions; unsupported/missing window titles cannot be reconstructed. The app doesn't guess a Space's name if thumbnail counts do not match. Full-screen Spaces have the same Desktop N naming as ordinary Spaces.
 
-There is no idle timer. While Mission Control is open, a 200 ms timer follows animation and hover changes; it stops when Mission Control closes. The normal menu bar feature does not need Accessibility.
+The overlay detects Mission Control even if it was already open when SpaceNameBar started or updated. It redraws whenever shown. There is no idle timer. While Mission Control is open, a 200 ms timer follows animation and hover changes; it stops when Mission Control closes. The normal menu bar feature does not need Accessibility.
 
 ## Build and install
 
@@ -103,3 +103,5 @@ Diagnostics (print counts/status only):
 Turn off **Reopen saved apps at login** and **Launch at login**, quit the app, then move `~/Applications/SpaceNameBar.app` to the Trash. Labels stay in UserDefaults unless you explicitly remove the `com.carusiphilip.SpaceNameBar` preference domain. Startup snapshots remain in the local Application Support folder until you remove them.
 
 Author: **Philip Carusi**. Copyright © 2026 Philip Carusi.
+
+For troubleshooting F3 label detection, quit the app and run the installed executable with `--watch-mission-control`. This prints permission, notification-registration, event and drawing counts to the terminal; it does not print your custom names or window titles. Quit that diagnostic process and reopen the app normally afterward.

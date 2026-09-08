@@ -26,6 +26,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let missionControl = MissionControlLabels()
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
+        if CommandLine.arguments.contains("--watch-mission-control") {
+            missionControl.start()
+            return
+        }
         if CommandLine.arguments.contains("--startup-status") {
             print("Saved apps: \(startup.snapshot?.apps.count ?? 0)")
             print("Backed-up custom names: \(startup.snapshot?.labels.count ?? 0)")
@@ -78,6 +82,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         // Start eagerly at login; opening the menu must never be required for restoration.
+        missionControl.start()
         startup.start()
     }
 }

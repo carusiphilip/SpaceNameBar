@@ -21,9 +21,15 @@ final class MissionControlLabels: ObservableObject {
     private var dockPID: pid_t?
     private var subscriptions = Set<AnyCancellable>()
     private var timer: Timer?
+    private var startupRecovery: Task<Void, Never>?
     private var openingUntil = Date.distantPast
     private var panels: [String: LabelPanel] = [:]
     private let notifications = ["AXExposeShowAllWindows", "AXExposeShowFrontWindows", "AXExposeExit", "AXExposeShowDesktop"]
+
+    private func trace(_ message: String) {
+        guard CommandLine.arguments.contains("--watch-mission-control") else { return }
+        try? FileHandle.standardOutput.write(contentsOf: Data((message + "\n").utf8))
+    }
 
     init() {
         let defaults = UserDefaults.standard
@@ -39,7 +45,21 @@ final class MissionControlLabels: ObservableObject {
             .receive(on: RunLoop.main).sink { [weak self] _ in
                 MainActor.assumeIsolated { self?.hide() }
             }.store(in: &subscriptions)
+    }
+
+    /// Run after AppKit finishes launching. Registration alone misses a Mission
+    /// Control view that was already open when this process started.
+    func start() {
+        startupRecovery?.cancel()
+        stopObserving()
         refreshPermission()
+        startupRecovery = Task { [weak self] in
+            // Bounded retries cover an overlapping Dock/Spaces launch animation.
+            for delay in [Duration.milliseconds(300), .seconds(1)] {
+                do { try await Task.sleep(for: delay) } catch { return }
+                self?.refreshPermission()
+            }
+        }
     }
 
     func requestPermission() {
@@ -50,6 +70,7 @@ final class MissionControlLabels: ObservableObject {
 
     func refreshPermission() {
         trusted = AXIsProcessTrusted()
+        trace("Permission: \(trusted); desktop labels: \(desktopLabels); window titles: \(windowLabels)")
         guard trusted, desktopLabels || windowLabels else {
             stopObserving()
             status = trusted ? "F3 labels are off." : "Allow Accessibility to show labels in F3."
@@ -60,7 +81,10 @@ final class MissionControlLabels: ObservableObject {
             status = "Waiting for Mission Control."
             return
         }
-        if observer != nil, dockPID == dock.processIdentifier { return }
+        if observer != nil, dockPID == dock.processIdentifier {
+            recoverOpenMissionControl()
+            return
+        }
         stopObserving()
         let element = AXUIElementCreateApplication(dock.processIdentifier)
         AXUIElementSetMessagingTimeout(element, 0.2)
@@ -78,8 +102,10 @@ final class MissionControlLabels: ObservableObject {
         }
         var registered = Set<String>()
         for name in notifications {
-            if AXObserverAddNotification(newObserver, element, name as CFString,
-                Unmanaged.passUnretained(self).toOpaque()) == .success { registered.insert(name) }
+            let result = AXObserverAddNotification(newObserver, element, name as CFString,
+                Unmanaged.passUnretained(self).toOpaque())
+            trace("Register \(name): \(result.rawValue)")
+            if result == .success { registered.insert(name) }
         }
         guard registered.contains("AXExposeShowAllWindows"), registered.contains("AXExposeExit") else {
             for name in registered { AXObserverRemoveNotification(newObserver, element, name as CFString) }
@@ -91,6 +117,14 @@ final class MissionControlLabels: ObservableObject {
         observer = newObserver
         CFRunLoopAddSource(CFRunLoopGetMain(), AXObserverGetRunLoopSource(newObserver), .commonModes)
         status = "Ready for F3."
+        recoverOpenMissionControl()
+    }
+
+    private func recoverOpenMissionControl() {
+        guard timer == nil, let dockElement,
+              AXRead.find("mc", in: dockElement, depth: 3) != nil else { return }
+        trace("Recovering already-open Mission Control")
+        beginTracking()
     }
 
     private func updateSettings() {
@@ -99,9 +133,15 @@ final class MissionControlLabels: ObservableObject {
     }
 
     private func receive(_ name: String) {
+        trace("Event: \(name)")
         if name == "AXExposeExit" || name == "AXExposeShowDesktop" { hide(); return }
         guard desktopLabels || windowLabels else { return }
         hide()
+        beginTracking()
+    }
+
+    private func beginTracking() {
+        guard timer == nil else { return }
         openingUntil = Date().addingTimeInterval(2)
         // Track animation/hover geometry only while Mission Control is open. Idle has no timer.
         timer = Timer(timeInterval: 0.2, repeats: true) { [weak self] _ in
@@ -131,6 +171,7 @@ final class MissionControlLabels: ObservableObject {
     private func scan() {
         guard AXIsProcessTrusted(), let dockElement else { refreshPermission(); return }
         guard let root = AXRead.find("mc", in: dockElement, depth: 3) else {
+            trace("Mission Control accessibility root absent")
             panels.values.forEach { $0.orderOut(nil) }
             if Date() > openingUntil { hide() }
             return
@@ -170,17 +211,24 @@ final class MissionControlLabels: ObservableObject {
             badges[screenID] = items
             let panel = panels[screenID] ?? LabelPanel(screen: screen)
             panels[screenID] = panel
-            panel.setFrame(screen.frame, display: false)
+            if panel.frame != screen.frame { panel.setFrame(screen.frame, display: true) }
             panel.labels.badges = items.map {
                 PreviewBadge(frame: $0.frame.offsetBy(dx: -screen.frame.minX, dy: -screen.frame.minY),
                              title: $0.title, desktop: $0.desktop)
             }
-            if items.isEmpty { panel.orderOut(nil) } else { panel.orderFrontRegardless() }
+            if items.isEmpty { panel.orderOut(nil) }
+            else if !panel.isVisible {
+                panel.orderFrontRegardless()
+                panel.labels.needsDisplay = true
+                panel.labels.displayIfNeeded()
+            }
         }
         for (id, panel) in panels where badges[id] == nil { panel.orderOut(nil) }
         let desktopCount = badges.values.flatMap { $0 }.filter(\.desktop).count
         let windowCount = badges.values.flatMap { $0 }.filter { !$0.desktop }.count
-        status = "F3: \(desktopCount) desktop labels, \(windowCount) window titles."
+        let nextStatus = "F3: \(desktopCount) desktop labels, \(windowCount) window titles."
+        if status != nextStatus { trace(nextStatus) }
+        status = nextStatus
     }
 }
 
@@ -253,7 +301,7 @@ private final class LabelPanel: NSPanel {
         isReleasedWhenClosed = false
         animationBehavior = .none
         contentView = labels
-        setAccessibilityElement(false)
+        title = "Mission Control Labels"
     }
     override var canBecomeKey: Bool { false }
     override var canBecomeMain: Bool { false }
@@ -265,6 +313,9 @@ private final class LabelsView: NSView {
         didSet { if oldValue != badges { needsDisplay = true } }
     }
     override func draw(_ dirtyRect: NSRect) {
+        if CommandLine.arguments.contains("--watch-mission-control") {
+            try? FileHandle.standardOutput.write(contentsOf: Data("Draw: \(badges.count) labels; bounds \(bounds)\n".utf8))
+        }
         for badge in badges {
             NSColor.black.withAlphaComponent(0.88).setFill()
             NSBezierPath(roundedRect: badge.frame, xRadius: 6, yRadius: 6).fill()

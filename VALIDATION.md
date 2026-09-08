@@ -39,3 +39,12 @@ Passed:
 - A fresh process reloaded that snapshot and confirmed startup restore and the login item were enabled. Saved names were compared against UserDefaults and matched exactly; snapshot permissions were verified.
 
 Not claimed or tested: a real reboot/logout, every third-party app's session restoration, exact window/Space placement, recreation of full-screen/Split View layouts, or resumption of terminal jobs. This release restores app launches and keeps name backups; it does not implement exact window layout restoration.
+
+## Version 1.2.1 — F3 recovery and redraw
+
+- Reproduced missing labels by restarting the app while Mission Control was already open: event registration succeeded, but there was no new opening event and no overlay was created.
+- Moved observer startup to applicationDidFinishLaunching and added recovery for an already-open Mission Control view, with two bounded startup retries.
+- Explicitly redraw when showing a previously hidden overlay; avoid repeatedly setting an unchanged window frame and ordering the same visible panel forward.
+- Live diagnostic run confirmed recovery without a new opening event, then label drawing through repeated Mission Control enter/exit cycles.
+- Visually verified desktop names and window titles in the actual overlay after the fix. No screenshots or window titles are included in this repository.
+- Core and startup checks passed. App snapshots and preferences were not modified by this fix.
