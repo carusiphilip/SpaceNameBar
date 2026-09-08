@@ -11,7 +11,17 @@ A small native macOS menu bar app that gives each desktop a name: **💬 Agent R
 
 **Reset Name** restores the default label. Saving an empty name does the same. Emoji are supported; names are limited to 80 characters. Short names fit best on crowded menu bars. Enable **Launch at login** in the popover if desired. There is no Dock icon or main window; quit from the popover.
 
-This labels your menu bar; it does not change Apple's desktop titles in Mission Control.
+Every Space—including a full-screen app—uses one continuous default sequence: **Desktop 1, Desktop 2, Desktop 3…**, following the Space list order. A saved custom name overrides that default.
+
+## Mission Control (F3)
+
+The menu has separate **Desktop names** and **Window titles** switches. Click **Enable Accessibility…**, then enable SpaceNameBar in System Settings → Privacy & Security → Accessibility. Reopen the menu after granting permission.
+
+The app draws click-through labels at the positions exposed by Mission Control: custom names (or Desktop N) on Space thumbnails, and existing window titles on individual window previews. It does not change other apps' titles or modify the Dock. Windows remain clickable and draggable through the overlay.
+
+**This integration is experimental pending live verification with Accessibility enabled.** Mission Control's accessibility structure is undocumented. Labels are shown only for thumbnails the Dock exposes with usable positions; unsupported/missing window titles cannot be reconstructed. The app doesn't guess a Space's name if thumbnail counts do not match. Full-screen Spaces have the same Desktop N naming as ordinary Spaces.
+
+There is no idle timer. While Mission Control is open, a 200 ms timer follows animation and hover changes; it stops when Mission Control closes. The normal menu bar feature does not need Accessibility.
 
 ## Build and install
 
@@ -27,7 +37,7 @@ The local build does not need a paid Apple developer account. It is not Develope
 
 ## How detection works
 
-SwiftUI `MenuBarExtra` with `.window` style provides a dropdown that supports a real text field. `LSUIElement` keeps the app out of the Dock. The app listens through `NSWorkspace.shared.notificationCenter` for `activeSpaceDidChangeNotification`. It also refreshes on wake, session activation, display changes, app activation (for display focus), and menu opening. Each system event has one cancellable 350 ms follow-up to handle transition timing. There is no periodic polling, input monitoring, background network traffic, or subprocess in the detection path.
+SwiftUI `MenuBarExtra` with `.window` style provides a dropdown that supports a real text field. `LSUIElement` keeps the app out of the Dock. The app listens through `NSWorkspace.shared.notificationCenter` for `activeSpaceDidChangeNotification`. It also refreshes on wake, session activation, display changes, app activation (for display focus), and menu opening. Each system event has one cancellable 350 ms follow-up to handle transition timing. The normal Space detection path has no periodic polling, input monitoring, background network traffic, or subprocess. The optional F3 overlay observes Dock Accessibility events and refreshes geometry only while Mission Control is open.
 
 Apple's public notification contains no Space identifier. A small isolated adapter dynamically resolves three **undocumented, read-only SkyLight functions**:
 
@@ -35,9 +45,9 @@ Apple's public notification contains no Space identifier. A small isolated adapt
 - `CGSCopyManagedDisplaySpaces`
 - `CGSCopyActiveMenuBarDisplayIdentifier`
 
-It reads the current desktop and its UUID. No injection, workspace manipulation, Accessibility permission, Screen Recording permission, root privileges, or SIP changes are used. Missing functions or unrecognizable data produce an unavailable message and disable naming instead of assigning a label to an arbitrary desktop. Private APIs can change in a macOS update; this is a personal utility, not an App Store submission.
+It reads the current desktop and its UUID. This read-only Space detection uses no injection, workspace manipulation, Accessibility permission, Screen Recording permission, root privileges, or SIP changes. The optional F3 overlay separately requires Accessibility permission to read the Dock's thumbnail geometry and titles. Missing functions or unrecognizable data produce an unavailable message and disable naming instead of assigning a label to an arbitrary desktop. Private APIs can change in a macOS update; this is a personal utility, not an App Store submission.
 
-References: [Apple's notification documentation](https://developer.apple.com/documentation/appkit/nsworkspace/activespacedidchangenotification), [CGS display declarations](https://github.com/NUIKit/CGSInternal/blob/master/CGSDisplays.h).
+References: [Dock Mission Control event declarations](https://github.com/asmvik/yabai/blob/master/src/mission_control.c), [Mission Control accessibility hierarchy](https://github.com/Hammerspoon/hammerspoon/blob/master/extensions/spaces/spaces.lua), [Apple's notification documentation](https://developer.apple.com/documentation/appkit/nsworkspace/activespacedidchangenotification), [CGS display declarations](https://github.com/NUIKit/CGSInternal/blob/master/CGSDisplays.h).
 
 ## Persistence and displays
 
@@ -55,7 +65,7 @@ swift run SpaceNameCoreChecks
 ./dist/SpaceNameBar.app/Contents/MacOS/SpaceNameBar --diagnose
 ```
 
-The dependency-free checks run with Command Line Tools alone. They cover UUID identity across reordering/new session IDs, full-screen numbering, multiple displays, unified displays, malformed data, current-Space resolution, independent persisted labels/reset, and Unicode limits. The diagnostic command prints Space metadata only and exits; it does not save labels.
+The dependency-free checks run with Command Line Tools alone. They cover UUID identity across reordering/new session IDs, continuous full-screen/desktop numbering, multiple displays, unified displays, malformed data, current-Space resolution, independent persisted labels/reset, Unicode limits, and overlay coordinate conversion across displays. The diagnostic command prints Space metadata only and exits; it does not save labels.
 
 Manual checks for a macOS update:
 
@@ -65,6 +75,14 @@ Manual checks for a macOS update:
 4. Check full-screen Spaces, sleep/wake, and any external displays you use.
 5. Enable launch at login, log out/in, and confirm startup. If macOS requests approval, allow SpaceNameBar in System Settings → General → Login Items & Extensions.
 
+## Launch at login and restoring a workspace
+
+**Launch at login starts SpaceNameBar only.** It does not capture or reopen the other apps, tabs, documents, or terminal jobs on a desktop. Workspace snapshot/restore is not implemented in this version.
+
+macOS offers **Reopen windows when logging back in** in its restart/logout dialog. App settings also affect which windows reopen. This is not a guarantee of restoring every window to its old Space, and terminal processes do not survive a restart. See [Apple's explanation](https://support.apple.com/en-ie/102318).
+
 ## Uninstall
 
 Turn off **Launch at login**, quit the app, then move `~/Applications/SpaceNameBar.app` to the Trash. Labels stay in UserDefaults unless you explicitly remove the `com.carusiphilip.SpaceNameBar` preference domain.
+
+Author: **Philip Carusi**. Copyright © 2026 Philip Carusi.

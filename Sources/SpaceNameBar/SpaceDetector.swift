@@ -36,7 +36,7 @@ final class SpaceDetector {
     }
 
     // Keep the framework loaded for the process lifetime; these function pointers must stay valid.
-    func snapshot(preferredDisplayID: String? = nil) throws -> (spaces: [Space], current: Space) {
+    func allSpaces() throws -> [Space] {
         guard let connection, let copySpaces else { throw DetectionError.unavailable }
         let cid = connection()
         guard let raw = copySpaces(cid)?.takeRetainedValue() as? [[String: Any]] else {
@@ -44,6 +44,13 @@ final class SpaceDetector {
         }
         let spaces = SpaceParser.parse(raw)
         guard !spaces.isEmpty else { throw DetectionError.noSpaces }
+        return spaces
+    }
+
+    func snapshot(preferredDisplayID: String? = nil) throws -> (spaces: [Space], current: Space) {
+        let spaces = try allSpaces()
+        guard let connection else { throw DetectionError.unavailable }
+        let cid = connection()
         let activeDisplay = copyDisplay?(cid)?.takeRetainedValue() as String?
         let display = preferredDisplayID ?? activeDisplay ?? Self.screenID(NSScreen.main)
         guard let current = SpaceParser.current(in: spaces, displayID: display) else {

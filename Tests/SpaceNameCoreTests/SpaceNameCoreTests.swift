@@ -1,4 +1,5 @@
 import Foundation
+import CoreGraphics
 import SpaceNameCore
 
 private let first = "11111111-1111-1111-1111-111111111111"
@@ -24,10 +25,10 @@ func labelsFollowUUIDAcrossReorderingAndNewSessionIDs() {
     check(SpaceParser.current(in: rebooted, displayID: "screen")?.id == first)
 }
 
-func fullscreenDoesNotIncrementDesktopNumbers() {
+func fullscreenSharesTheDesktopNumberSequence() {
     let spaces = SpaceParser.parse([display("screen", current: item(fullscreen, 3, type: 4),
         spaces: [item(first, 1), item(fullscreen, 3, type: 4), item(second, 2)])])
-    check(spaces.map(\.defaultName) == ["Desktop 1", "Full Screen 1", "Desktop 2"])
+    check(spaces.map(\.defaultName) == ["Desktop 1", "Desktop 2", "Desktop 3"])
     check(SpaceParser.current(in: spaces, displayID: "screen")?.isFullScreen == true)
 }
 
@@ -86,17 +87,30 @@ private func check(_ condition: @autoclosure () -> Bool, file: StaticString = #f
     guard condition() else { fatalError("Check failed", file: file, line: line) }
 }
 
+func overlayCoordinatesWorkAcrossDisplays() {
+    let primary = OverlayLayout.appKitFrame(CGRect(x: 20, y: 100, width: 200, height: 150), primaryTop: 1080)
+    check(primary == CGRect(x: 20, y: 830, width: 200, height: 150))
+    let above = OverlayLayout.appKitFrame(CGRect(x: -1400, y: -900, width: 100, height: 80), primaryTop: 1080)
+    check(above == CGRect(x: -1400, y: 1900, width: 100, height: 80))
+    let screen = CGRect(x: -1440, y: 1080, width: 1440, height: 900)
+    let badge = OverlayLayout.badgeFrame(in: above, screen: screen)
+    check(badge != nil && screen.contains(badge!))
+    check(OverlayLayout.badgeFrame(in: .zero, screen: screen) == nil)
+    check(OverlayLayout.badgeFrame(in: CGRect(x: 0, y: 0, width: 100, height: 100), screen: screen) == nil)
+}
+
 @main
 struct CoreChecks {
     static func main() throws {
         labelsFollowUUIDAcrossReorderingAndNewSessionIDs()
-        fullscreenDoesNotIncrementDesktopNumbers()
+        fullscreenSharesTheDesktopNumberSequence()
         multipleDisplaysRequireAnUnambiguousTarget()
         unifiedDisplaysCanUseTheSingleVisibleSpace()
         malformedAndUnstableIdentifiersAreNeverPersistable()
         currentSpaceCanBeResolvedWhenItsUUIDIsOmitted()
         try persistenceResetAndIndependentSpaces()
         labelLimitsPreserveEmojiAndRemoveNewlines()
-        print("Passed all 8 SpaceNameCore checks.")
+        overlayCoordinatesWorkAcrossDisplays()
+        print("Passed all 9 SpaceNameCore checks.")
     }
 }

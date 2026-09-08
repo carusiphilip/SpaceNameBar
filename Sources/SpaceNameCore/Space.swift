@@ -8,7 +8,7 @@ public struct Space: Equatable, Identifiable, Sendable, Codable {
     public let isCurrent: Bool
 
     public var defaultName: String {
-        isFullScreen ? "Full Screen \(number)" : "Desktop \(number)"
+        "Desktop \(number)"
     }
 
     public init(id: String, displayID: String, number: Int, isFullScreen: Bool, isCurrent: Bool) {
@@ -25,7 +25,6 @@ public enum SpaceParser {
     public static func parse(_ displays: [[String: Any]]) -> [Space] {
         var result: [Space] = []
         var desktopNumber = 0
-        var fullScreenNumber = 0
         for display in displays {
             guard let displayID = display["Display Identifier"] as? String,
                   let spaces = display["Spaces"] as? [[String: Any]] else { continue }
@@ -38,13 +37,13 @@ public enum SpaceParser {
                       let type = info["type"] as? NSNumber,
                       type.intValue == 0 || type.intValue == 4 else { continue }
                 let isFullScreen = type.intValue == 4
-                if isFullScreen { fullScreenNumber += 1 } else { desktopNumber += 1 }
+                desktopNumber += 1
                 let numericID = (info["ManagedSpaceID"] as? NSNumber)?.uint64Value
                     ?? (info["id64"] as? NSNumber)?.uint64Value
                 let matches = currentUUID.map { $0 == uuid }
                     ?? (currentID != nil && numericID == currentID)
                 result.append(Space(id: uuid, displayID: displayID,
-                                    number: isFullScreen ? fullScreenNumber : desktopNumber,
+                                    number: desktopNumber,
                                     isFullScreen: isFullScreen, isCurrent: matches))
             }
         }

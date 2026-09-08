@@ -6,10 +6,11 @@ import SpaceNameCore
 struct SpaceNameBarApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
     @StateObject private var model = SpaceModel()
+    @StateObject private var missionControl = MissionControlLabels()
 
     var body: some Scene {
         MenuBarExtra {
-            SpaceEditor(model: model)
+            SpaceEditor(model: model, missionControl: missionControl)
         } label: {
             Text(model.title)
                 .help(model.title)
@@ -41,6 +42,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
 private struct SpaceEditor: View {
     @ObservedObject var model: SpaceModel
+    @ObservedObject var missionControl: MissionControlLabels
     @State private var draft = ""
     @State private var editingID: String?
     @State private var saveError: String?
@@ -95,8 +97,24 @@ private struct SpaceEditor: View {
                 Text(saveError).font(.caption).foregroundStyle(.orange)
             }
             Divider()
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Mission Control (F3)").font(.subheadline.weight(.semibold))
+                Toggle("Desktop names", isOn: $missionControl.desktopLabels)
+                Toggle("Window titles", isOn: $missionControl.windowLabels)
+                if !missionControl.trusted {
+                    Text("Accessibility lets SpaceNameBar read thumbnail positions and window titles.")
+                        .font(.caption).foregroundStyle(.secondary)
+                    Button("Enable Accessibility…") { missionControl.requestPermission() }
+                } else {
+                    Text(missionControl.status).font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            .toggleStyle(.switch).controlSize(.small)
+            Divider()
             Toggle("Launch at login", isOn: Binding(get: { model.loginEnabled }, set: { model.setLoginEnabled($0) }))
                 .toggleStyle(.switch).controlSize(.small)
+            Text("Starts SpaceNameBar. Does not restore other apps or windows.")
+                .font(.caption).foregroundStyle(.secondary)
             if let loginError = model.loginError {
                 Text(loginError).font(.caption).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -117,6 +135,7 @@ private struct SpaceEditor: View {
 
     private func prepareEditor() {
         model.menuOpened()
+        missionControl.refreshPermission()
         loadDraft()
         nameFocused = true
     }
