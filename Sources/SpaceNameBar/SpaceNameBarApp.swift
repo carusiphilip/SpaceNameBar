@@ -12,9 +12,7 @@ struct SpaceNameBarApp: App {
         MenuBarExtra {
             SpaceEditor(model: model, missionControl: delegate.missionControl, startup: delegate.startup)
         } label: {
-            Text(model.title)
-                .help(model.title)
-                .accessibilityLabel("SpaceNameBar: \(model.title)")
+            SpaceMenuLabel(model: model, missionControl: delegate.missionControl)
         }
         .menuBarExtraStyle(.window)
     }
@@ -55,7 +53,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             print("Backed-up custom names: \(startup.snapshot?.labels.count ?? 0)")
             print("Startup restore enabled: \(startup.enabled)")
             print("Login item enabled: \(SMAppService.mainApp.status == .enabled)")
-            print("F3 Accessibility enabled: \(missionControl.trusted)")
+            print("This process has Accessibility: \(missionControl.trusted) (Terminal launches may inherit Terminal's permission; check the normal app's F3 status separately.)")
             NSApp.terminate(nil)
             return
         }
@@ -160,6 +158,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Start eagerly at login; opening the menu must never be required for restoration.
         missionControl.start()
         startup.start()
+    }
+}
+
+private struct SpaceMenuLabel: View {
+    @ObservedObject var model: SpaceModel
+    @ObservedObject var missionControl: MissionControlLabels
+
+    private var needsPermission: Bool {
+        !missionControl.trusted && (missionControl.desktopLabels || missionControl.windowLabels)
+    }
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Text(model.title)
+            if needsPermission { Image(systemName: "exclamationmark.triangle") }
+        }
+        .help(needsPermission ? "F3 labels need Accessibility permission. Open SpaceNameBar to enable it." : model.title)
+        .accessibilityLabel("SpaceNameBar: \(model.title)" + (needsPermission ? ". F3 labels need Accessibility permission." : ""))
     }
 }
 

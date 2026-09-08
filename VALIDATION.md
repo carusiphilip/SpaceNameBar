@@ -60,3 +60,17 @@ Not claimed or tested: a real reboot/logout, every third-party app's session res
 - Core checks cover new numeric window IDs, unique document/title matching, ambiguous duplicate rejection, Terminal slots, old snapshot migration and old receipt migration. Existing app-launch integration checks still pass.
 - A live Terminal restore exposed an inactive-desktop issue: Accessibility omitted windows after placement, causing early retries to create extra windows. WindowServer inventory now covers inactive ordinary and full-screen desktops. Existing extra windows are not automatically closed.
 - Full-screen reconstruction, identical document sessions, running shell jobs, exact window contents and a real reboot are not claimed as verified.
+
+## Version 1.3.1 — signing identity and real-process permission checks
+
+- Reproduced a permission discrepancy: the normally launched 1.3.0 process was denied Accessibility by TCC, while a directly executed copy reported trusted. TCC attributed the direct launch to Terminal, explaining the misleading diagnostic success.
+- Read-only inspection showed the saved Accessibility requirement pinned a different code hash from the installed ad-hoc build. No TCC records were modified directly.
+- Replaced ad-hoc signing with a persistent local certificate and a designated requirement pinned to that certificate and the bundle identifier. The private keychain remains outside the repository. No system-wide certificate trust was added.
+- A disposable changed bundle had a different code hash but satisfied the original signed build's requirement. Re-signing with an unrelated ad-hoc identity was rejected despite the identical bundle identifier.
+- Added normal-process permission/event logging and ten-second overlay health counts without names, titles, paths, or Space UUIDs. Added a menu warning and continued permission checks while F3 labels are enabled but permission is missing.
+- Core checks, disposable startup integration, release build, signature verification, signing continuity/rejection checks, shell/Python syntax checks and whitespace checks passed.
+- Installed version 1.3.1 and launched normally through Launch Services. The actual process correctly reports missing permission against the old grant. Accessibility renewal is required once for the new certificate identity.
+- The user renewed Accessibility. The already-running normal process detected the new grant without restarting and registered all Dock notifications. A live F3 opening reported an on-screen overlay panel with 17 desktop labels and four window titles.
+- Installed a genuinely changed build (build 7) after granting permission to build 6. The new Launch Services process started trusted with no additional prompt. Read-only validation confirmed the installed app satisfies the actual stored TCC code requirement.
+- Two subsequent F3 openings were recorded by build 7, generating 17 desktop labels and two window titles. No Terminal-launched diagnostic process was used as evidence of the normal app's permission.
+- Build 7 remained authorised with its Dock observer connected for more than five minutes after normal launch. Three further F3 openings were recorded approximately four minutes after launch, beyond the reported failure interval. Actual overlay composition was observed in the pre-update normal process; the post-update trace establishes permission and event recovery, not independent visual confirmation of legibility. No reboot or logout was performed.

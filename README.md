@@ -17,6 +17,8 @@ Every Space—including a full-screen app—uses one continuous default sequence
 
 ## Mission Control (F3)
 
+After updating from an older ad-hoc-signed build, renew SpaceNameBar’s Accessibility entry once in System Settings (remove the old entry and add the installed app again if toggling it does not work). Older builds tied the grant to an exact binary hash; the persistent signing identity allows later builds to satisfy the same identity requirement. A warning triangle in the menu bar means F3 labels lack permission. The app detects a renewed grant automatically.
+
 The menu has separate **Desktop names** and **Window titles** switches. Click **Enable Accessibility…**, then enable SpaceNameBar in System Settings → Privacy & Security → Accessibility. Reopen the menu after granting permission.
 
 The app draws click-through labels at the positions exposed by Mission Control: custom names (or Desktop N) on Space thumbnails, and existing window titles on individual window previews. It does not change other apps' titles or modify the Dock. Windows remain clickable and draggable through the overlay.
@@ -27,15 +29,15 @@ The overlay detects Mission Control even if it was already open when SpaceNameBa
 
 ## Build and install
 
-Requires macOS 13 or later and Swift 6 or later (Xcode or Apple's Command Line Tools). No third-party dependencies.
+Requires macOS 13 or later, Swift 6 or later (Xcode or Apple's Command Line Tools), and Python 3 for local signing. Signing uses the system OpenSSL, security, and codesign tools. No third-party package dependencies.
 
 ```sh
 ./scripts/install.sh
 ```
 
-This builds a release app, ad-hoc signs it, copies it to `~/Applications/SpaceNameBar.app`, and opens it. For updates, quit the existing app first. Build only with `./scripts/build.sh`. The bundle is in `dist/SpaceNameBar.app` and is built for the current Mac's architecture.
+This builds a release app, signs it with a persistent local certificate, copies it to `~/Applications/SpaceNameBar.app`, and opens it. For updates, quit the existing app first. Build only with `./scripts/build.sh`. The bundle is in `dist/SpaceNameBar.app` and is built for the current Mac's architecture.
 
-The local build does not need a paid Apple developer account. It is not Developer ID signed or notarized for distribution to other Macs.
+The first build creates an app-specific signing identity in `~/Library/Application Support/SpaceNameBar/Signing/` (private keychain, owner-only files). Subsequent builds reuse it. The certificate is pinned in the app’s designated requirement; no system-wide certificate trust is added. Keep this directory when updating the app. The local build does not need a paid Apple developer account. It is not Developer ID signed or notarized for distribution to other Macs.
 
 ## How detection works
 
@@ -113,3 +115,17 @@ Turn off **Restore saved layout at login** and **Launch at login**, quit the app
 Author: **Philip Carusi**. Copyright © 2026 Philip Carusi.
 
 For troubleshooting F3 label detection, quit the app and run the installed executable with `--watch-mission-control`. This prints permission, notification-registration, event and drawing counts to the terminal; it does not print your custom names or window titles. Quit that diagnostic process and reopen the app normally afterward.
+
+## Diagnosing the normally launched app
+
+Run the app through Finder or `open ~/Applications/SpaceNameBar.app`, then inspect its actual permission and overlay health:
+
+```sh
+/usr/bin/log show --last 5m --style compact --predicate 'subsystem == "com.carusiphilip.SpaceNameBar" AND category == "MissionControl"'
+```
+
+The normal process records permission/event changes and ten-second health counts in the macOS unified log. It does not record custom names, titles, paths, or Space UUIDs. On-screen window counts diagnose composition state; they do not prove that text is visually legible. These logs can age out under system retention policy.
+
+**Do not use a directly executed Terminal diagnostic as proof of the normal app’s permission.** macOS may attribute that process to Terminal, which has its own Accessibility grant. This can make a denied installed app appear healthy during testing. Finish verification with the normal Launch Services process, repeated F3 openings, and an idle interval longer than three minutes.
+
+`./scripts/check-signing.sh` verifies that a changed disposable app still satisfies the previous build’s signing requirement. It does not modify TCC or prove a grant has been renewed.

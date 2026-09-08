@@ -2,7 +2,7 @@
 
 ## Current release
 
-Version 1.3.0, build 5. The installed app is `~/Applications/SpaceNameBar.app`; the source repository is `SpaceNameBar`. `main` is the default branch of the public GitHub repository. There are no third-party package dependencies.
+Version 1.3.1, build 7. The installed app is `~/Applications/SpaceNameBar.app`; the source repository is `SpaceNameBar`. `main` is the default branch of the public GitHub repository. There are no third-party package dependencies.
 
 The app provides custom desktop names in the menu bar, F3 desktop/window overlays, launch at login, and saved window destinations. The README documents installation and user-facing behavior. `VALIDATION.md` records checks and their limits by release; older entries describe older behavior.
 
@@ -38,7 +38,7 @@ Use the installed executable's `--startup-status` to inspect current counts/sett
 
 ## Regression details to retain
 
-**F3:** Dock opening/exit notifications alone proved unreliable. The current service starts eagerly, recovers an already-open Mission Control, observes relevant shortcuts, checks for missed openings once per second, and recreates panels on every opening. Geometry refresh runs every 200 ms only while Mission Control is open. The user confirmed the latest recovery kept names visible. This is still an undocumented Dock integration, not a guarantee across future macOS releases.
+**F3:** Dock opening/exit notifications alone proved unreliable. The current service starts eagerly, recovers an already-open Mission Control, observes relevant shortcuts, checks for missed openings once per second, and recreates panels on every opening. Geometry refresh runs every 200 ms only while Mission Control is open. Earlier user confirmation was temporary: the failure recurred. Version 1.3.1 identified a separate permission/signing failure; do not infer lasting success from a Terminal diagnostic. This is still an undocumented Dock integration, not a guarantee across future macOS releases.
 
 **Inactive desktops:** AXWindows can omit windows on inactive ordinary and full-screen Spaces. Treating that as a closed window created extra Terminals during early live tests. Keep the WindowServer metadata fallback, and do not test missing-window creation using only the Accessibility count.
 
@@ -60,9 +60,9 @@ swift run SpaceNameCoreChecks
 ./scripts/build.sh
 ```
 
-The first command checks pure logic and persistence. The second launches and terminates only a disposable test app and exercises automatic startup with simulated sessions. The third creates and verifies an ad-hoc signed release bundle in `dist/`.
+The first command checks pure logic and persistence. The second launches and terminates only a disposable test app and exercises automatic startup with simulated sessions. The third creates and verifies a locally certificate-signed release bundle in `dist/`.
 
-With the installed app's existing Accessibility permission and at least two ordinary desktops, this additional check creates and closes only two disposable windows:
+With the test launcher's Accessibility permission and at least two ordinary desktops, this additional check creates and closes only two disposable windows:
 
 ```sh
 ~/Applications/SpaceNameBar.app/Contents/MacOS/SpaceNameBar --check-layout-restoration
@@ -83,3 +83,11 @@ The following are **mutating** maintenance commands, not routine verification:
 | `--restore-layout` | Resets the current receipt and restores apps/windows now. |
 
 Before publishing, review staged paths for user data, run `git diff --check`, push to `main`, and verify both a clean working tree and matching local/remote commits. Build artifacts and private runtime data are not repository deliverables.
+
+## Recurring F3 failure: signing and misleading diagnostics
+
+The normally launched 1.3.0 process was denied Accessibility (confirmed in TCC request results), although a direct Terminal launch of the same executable returned trusted. The latter inherited Terminal’s responsible-process attribution. The saved permission’s code hash did not match the installed build. Earlier `--watch-mission-control` success therefore did not establish permission in normal operation.
+
+`build.sh` now uses `sign.py` and an app-specific local certificate pinned by fingerprint in the designated requirement. Signing material is private under Application Support, never in the checkout. Do not replace it, use an identifier-only requirement, modify the TCC database, or launch through Terminal as a permission workaround. Python 3 and system OpenSSL/security/codesign tools are required. The keychain search list is restored after signing; run builds sequentially. Run `./scripts/check-signing.sh` after building to verify identity continuity across changed contents.
+
+On upgrade from the old hash identity, the user must renew Accessibility for the installed app once. Check permission in the normally launched process via the MissionControl unified-log category documented in README. The menu shows a warning for missing permission and the watchdog continues checking for a renewed grant. Normal diagnostics contain counts only. A Terminal CLI prints an explicit warning about inherited permission.

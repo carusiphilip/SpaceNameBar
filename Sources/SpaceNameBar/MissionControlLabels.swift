@@ -1,6 +1,7 @@
 import AppKit
 import ApplicationServices
 import Combine
+import OSLog
 import SpaceNameCore
 
 /// Observes the Dock through Accessibility. Input observation never consumes or modifies events.
@@ -27,9 +28,16 @@ final class MissionControlLabels: ObservableObject {
     private var watchdog: Timer?
     private var openingUntil = Date.distantPast
     private var panels: [String: LabelPanel] = [:]
+    private let logger = Logger(subsystem: "com.carusiphilip.SpaceNameBar", category: "MissionControl")
+    private var lastTrace = ""
+    private var lastHealth = Date.distantPast
     private let notifications = ["AXExposeShowAllWindows", "AXExposeShowFrontWindows", "AXExposeExit", "AXExposeShowDesktop"]
 
     private func trace(_ message: String) {
+        if message != lastTrace {
+            logger.notice("\(message, privacy: .public)")
+            lastTrace = message
+        }
         guard CommandLine.arguments.contains("--watch-mission-control") else { return }
         try? FileHandle.standardOutput.write(contentsOf: Data((message + "\n").utf8))
     }
@@ -75,16 +83,10 @@ final class MissionControlLabels: ObservableObject {
     func refreshPermission() {
         trusted = AXIsProcessTrusted()
         trace("Permission: \(trusted); desktop labels: \(desktopLabels); window titles: \(windowLabels)")
-        guard trusted, desktopLabels || windowLabels else {
-            stopObserving()
-            watchdog?.invalidate(); watchdog = nil
-            if let inputMonitor { NSEvent.removeMonitor(inputMonitor); self.inputMonitor = nil }
-            status = trusted ? "F3 labels are off." : "Allow Accessibility to show labels in F3."
-            return
-        }
-        if watchdog == nil {
-            // Dock occasionally drops its AXExpose notification stream. One shallow
-            // presence check per second recovers it without walking window previews.
+        reportHealth()
+        // Keep checking while permission is missing so a renewed grant takes
+        // effect without opening the editor or restarting from Terminal.
+        if watchdog == nil, desktopLabels || windowLabels {
             let watchdog = Timer(timeInterval: 1, repeats: true) { [weak self] _ in
                 MainActor.assumeIsolated {
                     guard let self, self.timer == nil else { return }
@@ -93,6 +95,15 @@ final class MissionControlLabels: ObservableObject {
             }
             self.watchdog = watchdog
             RunLoop.main.add(watchdog, forMode: .common)
+        }
+        guard trusted, desktopLabels || windowLabels else {
+            stopObserving()
+            if !desktopLabels && !windowLabels {
+                watchdog?.invalidate(); watchdog = nil
+            }
+            if let inputMonitor { NSEvent.removeMonitor(inputMonitor); self.inputMonitor = nil }
+            status = trusted ? "F3 labels are off." : "Allow Accessibility to show labels in F3."
+            return
         }
         if inputMonitor == nil {
             inputMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.keyDown, .systemDefined, .swipe]) { [weak self] event in
@@ -114,6 +125,7 @@ final class MissionControlLabels: ObservableObject {
         }
         stopObserving()
         let element = AXUIElementCreateApplication(dock.processIdentifier)
+        trace("Connecting Dock PID \(dock.processIdentifier)")
         AXUIElementSetMessagingTimeout(element, 0.2)
         var newObserver: AXObserver?
         let result = AXObserverCreate(dock.processIdentifier, { _, _, notification, context in
@@ -214,6 +226,7 @@ final class MissionControlLabels: ObservableObject {
     }
 
     private func scan() {
+        reportHealth()
         guard AXIsProcessTrusted(), let dockElement else { refreshPermission(); return }
         guard let root = AXRead.find("mc", in: dockElement, depth: 3) else {
             trace("Mission Control accessibility root absent")
@@ -276,6 +289,21 @@ final class MissionControlLabels: ObservableObject {
         let nextStatus = "F3: \(desktopCount) desktop labels, \(windowCount) window titles."
         if status != nextStatus { trace(nextStatus) }
         status = nextStatus
+    }
+
+    /// Counts only: never log names, titles, paths, or Space UUIDs. Unlike the
+    /// foreground diagnostic mode, this records failures in normal operation.
+    private func reportHealth() {
+        guard Date().timeIntervalSince(lastHealth) >= 10 else { return }
+        lastHealth = Date()
+        let onScreen = CGWindowListCopyWindowInfo(.optionOnScreenOnly, kCGNullWindowID) as? [[String: Any]] ?? []
+        let ids = Set(onScreen.compactMap { ($0[kCGWindowNumber as String] as? NSNumber)?.intValue })
+        let windows = Array(panels.values)
+        let visible = windows.filter(\.isVisible).count
+        let active = windows.filter(\.isOnActiveSpace).count
+        let composited = windows.filter { ids.contains($0.windowNumber) }.count
+        let badges = windows.reduce(0) { $0 + $1.labels.badges.count }
+        logger.notice("Health: tracking=\(self.timer != nil) observer=\(self.observer != nil) dock=\(self.dockPID ?? 0) panels=\(windows.count) visible=\(visible) active=\(active) onscreen=\(composited) badges=\(badges)")
     }
 }
 
