@@ -113,5 +113,6 @@ struct CoreChecks {
         overlayCoordinatesWorkAcrossDisplays()
         print("Passed all 9 SpaceNameCore checks.")
         try await startupChecks()
+        try windowPlacementChecks()
     }
 }

@@ -11,17 +11,19 @@ public struct StartupApp: Codable, Equatable, Sendable {
 }
 
 public struct StartupSnapshot: Codable, Sendable {
-    public var version = 1
+    public var version = 2
     public let savedAt: Date
     public let apps: [StartupApp]
     public let spaces: [Space]
     public let labels: [String: String]
+    public let windows: [SavedWindow]?
 
-    public init(apps: [StartupApp], spaces: [Space], labels: [String: String], savedAt: Date = Date()) {
+    public init(apps: [StartupApp], spaces: [Space], labels: [String: String], savedAt: Date = Date(), windows: [SavedWindow]? = nil) {
         self.savedAt = savedAt
         var seen = Set<String>()
         self.apps = apps.filter { !$0.bundleID.isEmpty && seen.insert($0.bundleID).inserted }
         self.spaces = spaces; self.labels = labels
+        self.windows = windows
     }
 }
 
@@ -30,6 +32,9 @@ public struct StartupReceipt: Codable, Sendable {
     public var attempts: [String: Int] = [:]
     public var failures: [String: String] = [:]
     public var completed = false
+    public var placementCompleted: Bool?
+    public var placementFailures: [String: String]?
+    public var terminalAttempts: [String]?
     public init(session: String, completed: Bool = false) { self.session = session; self.completed = completed }
 }
 
@@ -52,8 +57,10 @@ public final class StartupFiles {
         let current = directory.appendingPathComponent("startup.json")
         guard FileManager.default.fileExists(atPath: current.path) else { return nil }
         let result = try JSONDecoder().decode(StartupSnapshot.self, from: Data(contentsOf: current))
-        guard result.version == 1, result.apps.count <= 256,
-              Set(result.apps.map(\.bundleID)).count == result.apps.count else { throw StartupError.invalidSnapshot }
+        guard [1, 2].contains(result.version), result.apps.count <= 256,
+              Set(result.apps.map(\.bundleID)).count == result.apps.count,
+              (result.windows?.count ?? 0) <= 1024,
+              Set((result.windows ?? []).map(\.id)).count == (result.windows?.count ?? 0) else { throw StartupError.invalidSnapshot }
         return result
     }
 
@@ -79,6 +86,13 @@ public final class StartupFiles {
 
     public func saveReceipt(_ receipt: StartupReceipt) throws {
         try atomicWrite(JSONEncoder().encode(receipt), name: "startup-receipt.json")
+    }
+
+    public func saveTerminalProfile(_ data: Data, id: String) throws -> URL {
+        guard let uuid = UUID(uuidString: id) else { throw StartupError.invalidSnapshot }
+        let name = "terminal-\(uuid.uuidString).terminal"
+        try atomicWrite(data, name: name)
+        return directory.appendingPathComponent(name)
     }
 
     private func atomicWrite(_ data: Data, name: String) throws {

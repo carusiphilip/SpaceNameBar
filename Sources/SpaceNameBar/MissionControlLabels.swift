@@ -3,7 +3,7 @@ import ApplicationServices
 import Combine
 import SpaceNameCore
 
-/// Observes the Dock through Accessibility. No key interception, injection, or Dock mutations.
+/// Observes the Dock through Accessibility. Input observation never consumes or modifies events.
 @MainActor
 final class MissionControlLabels: ObservableObject {
     @Published private(set) var trusted = AXIsProcessTrusted()
@@ -22,6 +22,9 @@ final class MissionControlLabels: ObservableObject {
     private var subscriptions = Set<AnyCancellable>()
     private var timer: Timer?
     private var startupRecovery: Task<Void, Never>?
+    private var inputRecovery: Task<Void, Never>?
+    private var inputMonitor: Any?
+    private var watchdog: Timer?
     private var openingUntil = Date.distantPast
     private var panels: [String: LabelPanel] = [:]
     private let notifications = ["AXExposeShowAllWindows", "AXExposeShowFrontWindows", "AXExposeExit", "AXExposeShowDesktop"]
@@ -36,7 +39,8 @@ final class MissionControlLabels: ObservableObject {
         desktopLabels = defaults.object(forKey: "missionControl.desktopLabels") as? Bool ?? true
         windowLabels = defaults.object(forKey: "missionControl.windowLabels") as? Bool ?? true
         for name in [NSWorkspace.didActivateApplicationNotification, NSWorkspace.didLaunchApplicationNotification,
-                     NSWorkspace.didWakeNotification, NSWorkspace.sessionDidBecomeActiveNotification] {
+                     NSWorkspace.didWakeNotification, NSWorkspace.sessionDidBecomeActiveNotification,
+                     NSWorkspace.activeSpaceDidChangeNotification] {
             NSWorkspace.shared.notificationCenter.publisher(for: name).receive(on: RunLoop.main)
                 .sink { [weak self] _ in MainActor.assumeIsolated { self?.refreshPermission() } }
                 .store(in: &subscriptions)
@@ -73,8 +77,31 @@ final class MissionControlLabels: ObservableObject {
         trace("Permission: \(trusted); desktop labels: \(desktopLabels); window titles: \(windowLabels)")
         guard trusted, desktopLabels || windowLabels else {
             stopObserving()
+            watchdog?.invalidate(); watchdog = nil
+            if let inputMonitor { NSEvent.removeMonitor(inputMonitor); self.inputMonitor = nil }
             status = trusted ? "F3 labels are off." : "Allow Accessibility to show labels in F3."
             return
+        }
+        if watchdog == nil {
+            // Dock occasionally drops its AXExpose notification stream. One shallow
+            // presence check per second recovers it without walking window previews.
+            let watchdog = Timer(timeInterval: 1, repeats: true) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    guard let self, self.timer == nil else { return }
+                    self.refreshPermission()
+                }
+            }
+            self.watchdog = watchdog
+            RunLoop.main.add(watchdog, forMode: .common)
+        }
+        if inputMonitor == nil {
+            inputMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.keyDown, .systemDefined, .swipe]) { [weak self] event in
+                // F3, Control-Up and hardware Mission Control keys. Never read typed text.
+                let relevant = event.type == .swipe || event.type == .systemDefined ||
+                    (event.type == .keyDown && (event.keyCode == 99 ||
+                        (event.keyCode == 126 && event.modifierFlags.contains(.control))))
+                if relevant { MainActor.assumeIsolated { self?.scheduleRecovery() } }
+            }
         }
         guard let dock = NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.dock").first else {
             stopObserving()
@@ -134,16 +161,34 @@ final class MissionControlLabels: ObservableObject {
 
     private func receive(_ name: String) {
         trace("Event: \(name)")
-        if name == "AXExposeExit" || name == "AXExposeShowDesktop" { hide(); return }
+        if name == "AXExposeExit" || name == "AXExposeShowDesktop" {
+            hide(); scheduleRecovery(); return
+        }
         guard desktopLabels || windowLabels else { return }
         hide()
         beginTracking()
     }
 
+    private func scheduleRecovery() {
+        inputRecovery?.cancel()
+        inputRecovery = Task { [weak self] in
+            for delay in [Duration.milliseconds(150), .milliseconds(350), .milliseconds(700)] {
+                do { try await Task.sleep(for: delay) } catch { return }
+                guard let self else { return }
+                self.refreshPermission()
+                if self.timer != nil { self.scan() }
+            }
+        }
+    }
+
     private func beginTracking() {
         guard timer == nil else { return }
+        // A Dock transition can leave a reused overlay window marked visible
+        // but excluded from its new composition. Use fresh windows per opening.
+        panels.values.forEach { $0.close() }
+        panels.removeAll()
         openingUntil = Date().addingTimeInterval(2)
-        // Track animation/hover geometry only while Mission Control is open. Idle has no timer.
+        // Track animation/hover geometry only while Mission Control is open.
         timer = Timer(timeInterval: 0.2, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.scan() }
         }
@@ -217,9 +262,11 @@ final class MissionControlLabels: ObservableObject {
                              title: $0.title, desktop: $0.desktop)
             }
             if items.isEmpty { panel.orderOut(nil) }
-            else if !panel.isVisible {
+            else {
+                let wasVisible = panel.isVisible
+                // Dock can reorder its animation windows above a still-visible panel.
                 panel.orderFrontRegardless()
-                panel.labels.needsDisplay = true
+                if !wasVisible { panel.labels.needsDisplay = true }
                 panel.labels.displayIfNeeded()
             }
         }

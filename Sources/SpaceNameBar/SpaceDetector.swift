@@ -37,14 +37,30 @@ final class SpaceDetector {
 
     // Keep the framework loaded for the process lifetime; these function pointers must stay valid.
     func allSpaces() throws -> [Space] {
+        SpaceParser.parse(try rawDisplays())
+    }
+
+    func managedSpaceIDs() throws -> [String: UInt64] {
+        var result: [String: UInt64] = [:]
+        for display in try rawDisplays() {
+            for space in display["Spaces"] as? [[String: Any]] ?? [] {
+                if let text = space["uuid"] as? String, let uuid = UUID(uuidString: text)?.uuidString,
+                   let id = (space["ManagedSpaceID"] ?? space["id64"]) as? NSNumber {
+                    result[uuid] = id.uint64Value
+                }
+            }
+        }
+        return result
+    }
+
+    private func rawDisplays() throws -> [[String: Any]] {
         guard let connection, let copySpaces else { throw DetectionError.unavailable }
         let cid = connection()
         guard let raw = copySpaces(cid)?.takeRetainedValue() as? [[String: Any]] else {
             throw DetectionError.noSpaces
         }
-        let spaces = SpaceParser.parse(raw)
-        guard !spaces.isEmpty else { throw DetectionError.noSpaces }
-        return spaces
+        guard !SpaceParser.parse(raw).isEmpty else { throw DetectionError.noSpaces }
+        return raw
     }
 
     func snapshot(preferredDisplayID: String? = nil) throws -> (spaces: [Space], current: Space) {

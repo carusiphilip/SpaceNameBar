@@ -29,7 +29,7 @@ final class StartupController: ObservableObject {
         do {
             snapshot = try self.files.load()
             if let snapshot {
-                status = "\(snapshot.apps.count) apps saved for startup."
+                status = "\(snapshot.apps.count) apps and \(snapshot.windows?.count ?? 0) windows saved for startup."
                 // Recover only an entirely missing label store, never resurrect intentionally reset names.
                 if defaults.object(forKey: LabelStore.storageKey) == nil {
                     defaults.set(snapshot.labels, forKey: LabelStore.storageKey)
@@ -51,17 +51,43 @@ final class StartupController: ObservableObject {
         }.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
         guard !apps.isEmpty else { throw StartupError.noSnapshot }
         let labels = defaults.dictionary(forKey: LabelStore.storageKey) as? [String: String] ?? [:]
-        let captured = StartupSnapshot(apps: apps, spaces: try SpaceDetector().allSpaces(), labels: labels)
+        let spaces = try SpaceDetector().allSpaces()
+        let windows = try WindowLayout.capture(apps: apps, spaces: spaces, labels: labels, previous: snapshot?.windows ?? [])
+        let captured = StartupSnapshot(apps: apps, spaces: spaces, labels: labels, windows: windows)
         try files.save(captured)
         // Saving now must not reopen apps during this same login session.
-        try files.saveReceipt(StartupReceipt(session: try sessionProvider(), completed: true))
+        var receipt = StartupReceipt(session: try sessionProvider(), completed: true)
+        receipt.placementCompleted = true
+        try files.saveReceipt(receipt)
         snapshot = try files.load()
         try enable(true)
-        status = "Saved \(apps.count) apps and \(labels.count) custom names."
+        status = "Saved \(apps.count) apps, \(windows.count) windows and \(labels.count) custom names."
     }
 
     func saveCurrentApps() {
         do { try captureAndEnable() } catch { status = error.localizedDescription }
+    }
+
+    func setTerminalCount(_ count: Int, spaceID: String) throws {
+        guard !busy, let snapshot, (0...20).contains(count),
+              let space = try SpaceDetector().allSpaces().first(where: { $0.id == spaceID }), !space.isFullScreen else {
+            throw WindowLayout.failure("Choose an ordinary desktop and save the current layout first.")
+        }
+        let name = LabelStore(defaults: defaults).label(for: spaceID) ?? space.defaultName
+        var windows = (snapshot.windows ?? []).filter { !($0.bundleID == TerminalWindows.bundleID && $0.spaceID == spaceID) }
+        for index in 0..<count {
+            windows.append(SavedWindow(bundleID: TerminalWindows.bundleID, title: "", document: nil,
+                spaceID: spaceID, fullScreen: false, terminalTitle: "\(name) · Terminal \(index + 1)"))
+        }
+        var apps = snapshot.apps
+        if count > 0, !apps.contains(where: { $0.bundleID == TerminalWindows.bundleID }),
+           let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: TerminalWindows.bundleID) {
+            apps.append(StartupApp(bundleID: TerminalWindows.bundleID, name: "Terminal", path: url.path))
+        }
+        let labels = defaults.dictionary(forKey: LabelStore.storageKey) as? [String: String] ?? [:]
+        try files.save(StartupSnapshot(apps: apps, spaces: try SpaceDetector().allSpaces(), labels: labels, windows: windows))
+        self.snapshot = try files.load()
+        status = "Saved \(count) Terminal windows for \(name)."
     }
 
     func setEnabled(_ value: Bool) {
@@ -85,8 +111,11 @@ final class StartupController: ObservableObject {
         guard enabled, let snapshot else { return }
         do {
             let session = try sessionProvider()
-            if let receipt = try files.receipt(), receipt.session == session, receipt.completed {
-                if !receipt.failures.isEmpty { status = "\(receipt.failures.count) apps could not be reopened. Use Reopen saved apps to retry." }
+            if let receipt = try files.receipt(), receipt.session == session, receipt.completed,
+               snapshot.windows?.isEmpty != false || receipt.placementCompleted == true {
+                if !receipt.failures.isEmpty || !(receipt.placementFailures ?? [:]).isEmpty {
+                    status = "Some saved apps or windows could not be restored. Use Restore saved layout to retry."
+                }
                 return
             }
             let delay = initialDelay
@@ -121,13 +150,21 @@ final class StartupController: ObservableObject {
         status = "Reopening saved apps…"
         defer { busy = false }
         do {
-            let receipt = try await StartupEngine(files: files).restore(snapshot, session: session,
+            var receipt = try await StartupEngine(files: files).restore(snapshot, session: session,
                 isRunning: Self.isRunning, launch: Self.launch,
                 pause: { try await Task.sleep(for: .seconds(3)) })
-            if receipt.failures.isEmpty { status = "All \(snapshot.apps.count) saved apps are running." }
+            if snapshot.windows?.isEmpty == false {
+                status = "Restoring windows to their saved desktops…"
+                receipt = try await LayoutRestorer.restore(snapshot, receipt: receipt, files: files)
+            }
+            let windowFailures = receipt.placementFailures?.count ?? 0
+            if receipt.failures.isEmpty && windowFailures == 0 {
+                status = snapshot.windows?.isEmpty == false ? "Restored \(snapshot.windows!.count) windows to their saved desktops." :
+                    "All \(snapshot.apps.count) saved apps are running."
+            }
             else {
                 let names = snapshot.apps.filter { receipt.failures[$0.bundleID] != nil }.map(\.name)
-                status = "Could not reopen: \(names.joined(separator: ", "))."
+                status = "\(windowFailures) windows need attention." + (names.isEmpty ? "" : " Could not reopen: \(names.joined(separator: ", ")).")
             }
         } catch { status = error.localizedDescription }
     }
@@ -181,7 +218,7 @@ final class StartupController: ObservableObject {
 }
 
 @MainActor
-private final class PendingLaunch {
+final class PendingLaunch {
     private var continuation: CheckedContinuation<Void, Error>?
     var timeout: Task<Void, Never>?
     init(_ continuation: CheckedContinuation<Void, Error>) { self.continuation = continuation }

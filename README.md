@@ -21,7 +21,7 @@ The app draws click-through labels at the positions exposed by Mission Control: 
 
 **This integration is experimental.** Live Accessibility event delivery, label generation and visible labels after repeated Mission Control openings have been checked. Exact alignment across other display arrangements and click-through behavior still need broader verification. Mission Control's accessibility structure is undocumented. Labels are shown only for thumbnails the Dock exposes with usable positions; unsupported/missing window titles cannot be reconstructed. The app doesn't guess a Space's name if thumbnail counts do not match. Full-screen Spaces have the same Desktop N naming as ordinary Spaces.
 
-The overlay detects Mission Control even if it was already open when SpaceNameBar started or updated. It redraws whenever shown. There is no idle timer. While Mission Control is open, a 200 ms timer follows animation and hover changes; it stops when Mission Control closes. The normal menu bar feature does not need Accessibility.
+The overlay detects Mission Control even if it was already open when SpaceNameBar started or updated. It redraws whenever shown. A shallow once-per-second check recovers missed Dock events when F3 labels are enabled. F3/Control-Up input is observed without consuming events or recording typed text. Each opening creates fresh overlay panels. While Mission Control is open, a 200 ms timer follows animation and hover changes; it stops when Mission Control closes. The normal menu bar feature does not need Accessibility.
 
 ## Build and install
 
@@ -37,7 +37,7 @@ The local build does not need a paid Apple developer account. It is not Develope
 
 ## How detection works
 
-SwiftUI `MenuBarExtra` with `.window` style provides a dropdown that supports a real text field. `LSUIElement` keeps the app out of the Dock. The app listens through `NSWorkspace.shared.notificationCenter` for `activeSpaceDidChangeNotification`. It also refreshes on wake, session activation, display changes, app activation (for display focus), and menu opening. Each system event has one cancellable 350 ms follow-up to handle transition timing. The normal Space detection path has no periodic polling, input monitoring, background network traffic, or subprocess. The optional F3 overlay observes Dock Accessibility events and refreshes geometry only while Mission Control is open.
+SwiftUI `MenuBarExtra` with `.window` style provides a dropdown that supports a real text field. `LSUIElement` keeps the app out of the Dock. The app listens through `NSWorkspace.shared.notificationCenter` for `activeSpaceDidChangeNotification`. It also refreshes on wake, session activation, display changes, app activation (for display focus), and menu opening. Each system event has one cancellable 350 ms follow-up to handle transition timing. The normal Space detection path has no periodic polling, input monitoring, background network traffic, or subprocess. The optional F3 overlay observes Dock Accessibility events, checks for a missed opening once per second, and refreshes geometry only while Mission Control is open.
 
 Apple's public notification contains no Space identifier. A small isolated adapter dynamically resolves three **undocumented, read-only SkyLight functions**:
 
@@ -76,31 +76,37 @@ Manual checks for a macOS update:
 4. Check full-screen Spaces, sleep/wake, and any external displays you use.
 5. Enable launch at login, log out/in, and confirm startup. If macOS requests approval, allow SpaceNameBar in System Settings → General → Login Items & Extensions.
 
-## Saved startup apps
+## Saved startup layout
 
-**Save current apps** records the currently running desktop apps and backs up all custom Space names. It also enables **Launch at login** and **Reopen saved apps at login**. Save again when you want to replace the startup app list. Ordinary menu-bar name edits still save immediately to UserDefaults.
+**Save current layout** records running apps, identifiable windows, their desktop UUIDs, and a backup of all custom names. It enables **Launch at login** and **Restore saved layout at login**. Save again to replace this layout. The current layout is not continuously overwritten as you work.
 
-After a new login or reboot, SpaceNameBar starts automatically, waits 15 seconds for macOS session restoration, and opens any saved apps that are not already running. It does not send another open event to apps macOS has already restored. Failed launches have a 30-second timeout and at most three attempts; a local receipt records failures. **Reopen saved apps** lets you retry manually.
+After login, the app waits 15 seconds for macOS session restoration and opens missing apps. Window restoration then waits up to another 30 seconds for documents to appear, matches windows by unique document/title identity, and moves ordinary windows to their saved desktop UUIDs. Every move is checked by reading its actual Space membership. Windows on inactive desktops are counted using WindowServer metadata as well as Accessibility; an empty Accessibility list does not mean those windows have closed.
 
-Automatic restoration runs once per login session, even if SpaceNameBar is quit and relaunched. Disabling **Launch at login** also disables automatic app restoration. The service starts from the app delegate; opening the menu is not required.
+On an ordinary desktop, **Save 2 Terminal windows for this desktop** saves two Terminal slots. Matching windows already on that desktop satisfy the slots. Missing Terminal windows can open as fresh login shells using local `.terminal` profiles, then move to the saved desktop. Creation is checkpointed before each attempt to prevent repeated opens after a crash. Extra existing windows are not closed. Ambiguous matches are reported rather than moved to an arbitrary task. Terminal shell commands, running jobs, tabs, and working directories are not recreated by the fresh-shell fallback.
 
-**This restores app launches, not an exact window layout.** Browser tabs, documents, terminal windows, full-screen arrangements, and placement on particular Spaces depend on macOS and each app's own session restoration. SpaceNameBar does not recreate those windows or move them between Spaces. Terminal jobs do not survive reboot and are never automatically rerun. If macOS recreates a Space with a new UUID, its old label cannot be safely assigned to it automatically.
+**Restore saved layout** retries manually. Automatic restore runs once per boot/login; reopening SpaceNameBar during the same session does not rearrange your windows. Disabling launch at login disables automatic restoration too. Opening the menu is never required for startup restore.
 
-macOS offers **Reopen windows when logging back in** in its restart/logout dialog, and individual app settings also affect restoration. See [Apple's explanation](https://support.apple.com/en-ie/102318).
+Placement requires Accessibility and a macOS version exposing the bridged SkyLight move operation (verified locally on macOS 26.5.2). The adapter calls `SLSBridgedMoveWindowsToManagedSpaceOperation.performWithWMBridgeDelegate` dynamically and verifies the result. It does not inject into the Dock, disable SIP, require root, or request Screen Recording. References: [bridged operation declarations](https://gist.github.com/stephancasas-openai/1b31a8d76c6a103e4676ac196e06e9d8), [SIP-enabled movement reports](https://github.com/asmvik/yabai/issues/2788).
 
-The app list, Space metadata and name backup are stored locally in `~/Library/Application Support/SpaceNameBar/startup.json`. A previous snapshot is kept as `startup.previous.json` when you save again; progress is in `startup-receipt.json`. Files are owner-only (`0600`) in an owner-only directory (`0700`), with atomic writes. No snapshot, app paths or custom names are uploaded to GitHub or sent over the network.
+**This is not exact session reconstruction.** Other apps must reopen their own documents and tabs. Full-screen/Split View arrangements depend on macOS and the owning app; SpaceNameBar does not rebuild those arrangements. If a desktop is deleted/recreated with a different UUID, it is reported missing instead of routing to whatever desktop now occupies its old number. Missing/ambiguous windows remain listed as needing attention. No real reboot is part of the automated tests.
 
-The startup checks cover disk persistence, duplicate avoidance, retry limits, failures, new boot/login handling, crash recovery, private file permissions and backups. `scripts/check-startup.sh` builds an isolated, windowless test app and verifies actual launches plus the automatic startup controller using simulated new sessions. It doesn't restart the Mac or close the user's apps. A real reboot is not part of these tests.
+The app list, window identities, desktop destinations and name backup remain in `~/Library/Application Support/SpaceNameBar/startup.json`; a previous snapshot is retained. Receipts and Terminal profiles are stored in the same owner-only directory (`0700`) with owner-only files (`0600`) and atomic writes. No names, window titles, app paths or snapshots are uploaded. Files from older app-only snapshots remain readable.
 
-Diagnostics (print counts/status only):
+Verification commands:
 
 ```sh
+swift run SpaceNameCoreChecks
+./scripts/check-startup.sh
+~/Applications/SpaceNameBar.app/Contents/MacOS/SpaceNameBar --check-layout-restoration
+~/Applications/SpaceNameBar.app/Contents/MacOS/SpaceNameBar --verify-layout
 ~/Applications/SpaceNameBar.app/Contents/MacOS/SpaceNameBar --startup-status
 ```
 
+The layout integration check creates and closes only its own two disposable windows. It exercises the actual automatic startup controller with a simulated new login, checks placement on distinct existing desktops, resumes after the app-launch phase, and verifies that a second launch in the same session does not repeat placement. `--verify-layout` is read-only; status commands print counts rather than window titles.
+
 ## Uninstall
 
-Turn off **Reopen saved apps at login** and **Launch at login**, quit the app, then move `~/Applications/SpaceNameBar.app` to the Trash. Labels stay in UserDefaults unless you explicitly remove the `com.carusiphilip.SpaceNameBar` preference domain. Startup snapshots remain in the local Application Support folder until you remove them.
+Turn off **Restore saved layout at login** and **Launch at login**, quit the app, then move `~/Applications/SpaceNameBar.app` to the Trash. Labels stay in UserDefaults unless you explicitly remove the `com.carusiphilip.SpaceNameBar` preference domain. Startup snapshots remain in the local Application Support folder until you remove them.
 
 Author: **Philip Carusi**. Copyright © 2026 Philip Carusi.
 

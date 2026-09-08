@@ -7,7 +7,8 @@ let package = Package(
     products: [.executable(name: "SpaceNameBar", targets: ["SpaceNameBar"])],
     targets: [
         .target(name: "SpaceNameCore"),
-        .executableTarget(name: "SpaceNameBar", dependencies: ["SpaceNameCore"]),
+        .target(name: "WindowSpaceBridge", linkerSettings: [.linkedFramework("AppKit"), .linkedFramework("ApplicationServices")]),
+        .executableTarget(name: "SpaceNameBar", dependencies: ["SpaceNameCore", "WindowSpaceBridge"]),
         // A standalone test runner also works with Apple's Command Line Tools (no Xcode/XCTest needed).
         .executableTarget(name: "SpaceNameCoreChecks", dependencies: ["SpaceNameCore"], path: "Tests/SpaceNameCoreTests")
     ]

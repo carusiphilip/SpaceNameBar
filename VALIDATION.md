@@ -48,3 +48,13 @@ Not claimed or tested: a real reboot/logout, every third-party app's session res
 - Live diagnostic run confirmed recovery without a new opening event, then label drawing through repeated Mission Control enter/exit cycles.
 - Visually verified desktop names and window titles in the actual overlay after the fix. No screenshots or window titles are included in this repository.
 - Core and startup checks passed. App snapshots and preferences were not modified by this fix.
+
+## Version 1.3 — placement and recurring F3 recovery
+
+- F3 labels recurred as missing after the earlier fix. Added fresh panels for every opening, event-driven shortcut recovery, and a shallow one-second check for missed Dock events. Live traces demonstrated recovery before an opening notification arrived. The user confirmed the labels remained visible after this update.
+- Implemented window snapshots and verified moves using the bridged SkyLight operation with system security unchanged.
+- A disposable window moved to another ordinary desktop and back, with both memberships checked.
+- Two disposable windows restored to different desktops through the real delayed startup controller under a simulated login. The check also covered a completed app-launch receipt with incomplete placement, plus same-login suppression.
+- Core checks cover new numeric window IDs, unique document/title matching, ambiguous duplicate rejection, Terminal slots, old snapshot migration and old receipt migration. Existing app-launch integration checks still pass.
+- A live Terminal restore exposed an inactive-desktop issue: Accessibility omitted windows after placement, causing early retries to create extra windows. WindowServer inventory now covers inactive ordinary and full-screen desktops. Existing extra windows are not automatically closed.
+- Full-screen reconstruction, identical document sessions, running shell jobs, exact window contents and a real reboot are not claimed as verified.

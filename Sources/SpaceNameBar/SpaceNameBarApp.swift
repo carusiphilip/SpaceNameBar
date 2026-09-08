@@ -26,17 +26,65 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let missionControl = MissionControlLabels()
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
+        if CommandLine.arguments.contains("--check-layout-restoration") {
+            Task { @MainActor in
+                do { try await LayoutIntegrationChecks.run(); NSApp.terminate(nil) }
+                catch { fputs("Layout integration check failed: \(error.localizedDescription)\n", stderr); exit(1) }
+            }
+            return
+        }
         if CommandLine.arguments.contains("--watch-mission-control") {
             missionControl.start()
             return
         }
-        if CommandLine.arguments.contains("--startup-status") {
+        if CommandLine.arguments.contains("--startup-status") || CommandLine.arguments.contains("--window-access-status") {
             print("Saved apps: \(startup.snapshot?.apps.count ?? 0)")
+            print("Saved windows: \(startup.snapshot?.windows?.count ?? 0)")
+            if let snapshot = startup.snapshot,
+               let live = try? WindowLayout.inventory(bundleIDs: Set(snapshot.apps.map(\.bundleID))),
+               let ids = try? SpaceDetector().managedSpaceIDs() {
+                print("Readable live windows: \(live.count); fullscreen: \(live.filter(\.fullScreen).count)")
+                print("Windows with recognized desktop: \(live.filter { !Set(ids.values).isDisjoint(with: $0.spaces) }.count)")
+                for target in snapshot.spaces {
+                    let planned = (snapshot.windows ?? []).filter { $0.bundleID == TerminalWindows.bundleID && $0.spaceID == target.id }.count
+                    guard planned > 0, let id = ids[target.id] else { continue }
+                    let actual = live.filter { $0.candidate.bundleID == TerminalWindows.bundleID && $0.spaces == [id] }
+                    print("Desktop \(target.number): Terminal planned \(planned), actual \(actual.count), readable titles \(actual.filter { !$0.candidate.title.isEmpty }.count)")
+                }
+            }
             print("Backed-up custom names: \(startup.snapshot?.labels.count ?? 0)")
             print("Startup restore enabled: \(startup.enabled)")
             print("Login item enabled: \(SMAppService.mainApp.status == .enabled)")
             print("F3 Accessibility enabled: \(missionControl.trusted)")
             NSApp.terminate(nil)
+            return
+        }
+        if CommandLine.arguments.contains("--check-window-placement") {
+            Task { @MainActor in
+                do {
+                    let detector = SpaceDetector()
+                    let spaces = try detector.allSpaces().filter { !$0.isFullScreen }
+                    let ids = try detector.managedSpaceIDs()
+                    guard spaces.count >= 2 else { throw WindowLayout.failure("Two ordinary desktops are required for this check.") }
+                    let window = NSWindow(contentRect: NSRect(x: 50, y: 50, width: 240, height: 100),
+                        styleMask: [.titled, .closable], backing: .buffered, defer: false)
+                    window.isReleasedWhenClosed = false
+                    window.title = "SpaceNameBar placement check"
+                    window.orderFront(nil)
+                    defer { window.close() }
+                    try await Task.sleep(for: .milliseconds(500))
+                    let id = UInt32(window.windowNumber)
+                    let original = WindowLayout.membership(id)
+                    guard original.count == 1, let home = original.first,
+                          let target = spaces.compactMap({ ids[$0.id] }).first(where: { $0 != home }) else {
+                        throw WindowLayout.failure("Could not identify test desktop destinations.")
+                    }
+                    try await WindowLayout.move(id, to: target)
+                    try await WindowLayout.move(id, to: home)
+                    print("PASS: disposable window moved to another desktop and back; both destinations verified.")
+                    NSApp.terminate(nil)
+                } catch { fputs("Placement check failed: \(error.localizedDescription)\n", stderr); exit(1) }
+            }
             return
         }
         if CommandLine.arguments.contains("--save-startup") {
@@ -49,6 +97,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             } catch {
                 fputs("SpaceNameBar: \(error.localizedDescription)\n", stderr)
                 exit(1)
+            }
+            return
+        }
+        if let index = CommandLine.arguments.firstIndex(of: "--configure-terminals"), CommandLine.arguments.count > index + 2 {
+            do {
+                guard let count = Int(CommandLine.arguments[index + 2]) else { throw StartupError.invalidSnapshot }
+                try startup.setTerminalCount(count, spaceID: CommandLine.arguments[index + 1])
+                print(startup.status)
+                NSApp.terminate(nil)
+            } catch { fputs("SpaceNameBar: \(error.localizedDescription)\n", stderr); exit(1) }
+            return
+        }
+        if CommandLine.arguments.contains("--verify-layout") {
+            do {
+                guard let snapshot = startup.snapshot else { throw StartupError.noSnapshot }
+                let result = try LayoutRestorer.verify(snapshot)
+                print("Windows verified on saved desktops: \(result.placed)/\(result.total)")
+                NSApp.terminate(nil)
+            } catch { fputs("SpaceNameBar: \(error.localizedDescription)\n", stderr); exit(1) }
+            return
+        }
+        if CommandLine.arguments.contains("--restore-layout") {
+            startup.restoreNow()
+            Task { @MainActor in
+                try? await Task.sleep(for: .milliseconds(200))
+                while startup.busy { try? await Task.sleep(for: .milliseconds(200)) }
+                print(startup.status)
+                NSApp.terminate(nil)
             }
             return
         }
@@ -166,21 +242,27 @@ private struct SpaceEditor: View {
             }))
                 .toggleStyle(.switch).controlSize(.small)
             VStack(alignment: .leading, spacing: 8) {
-                Text("Saved startup apps").font(.subheadline.weight(.semibold))
-                Toggle("Reopen saved apps at login", isOn: Binding(get: { startup.enabled }, set: {
+                Text("Saved startup layout").font(.subheadline.weight(.semibold))
+                Toggle("Restore saved layout at login", isOn: Binding(get: { startup.enabled }, set: {
                     startup.setEnabled($0); model.refreshLoginStatus()
                 }))
                     .toggleStyle(.switch).controlSize(.small)
                     .disabled(startup.snapshot == nil)
                 HStack {
-                    Button("Save current apps") { startup.saveCurrentApps(); model.refreshLoginStatus() }
+                    Button("Save current layout") { startup.saveCurrentApps(); model.refreshLoginStatus() }
                     Spacer()
-                    Button("Reopen saved apps") { startup.restoreNow() }
+                    Button("Restore saved layout") { startup.restoreNow() }
                         .disabled(startup.snapshot == nil || startup.busy)
                 }
                 Text(startup.status).font(.caption).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
-                Text("Apps reopen; tabs, documents and desktop placement depend on each app. Terminal jobs do not resume.")
+                if let current = model.current, !current.isFullScreen, startup.snapshot != nil {
+                    Button("Save 2 Terminal windows for this desktop") {
+                        do { try startup.setTerminalCount(2, spaceID: current.id) }
+                        catch { saveError = error.localizedDescription }
+                    }.disabled(startup.busy)
+                }
+                Text("Matching windows return to their saved desktops. Missing Terminal windows open fresh shells. Other apps restore their own documents; full-screen arrangements and running jobs may not return.")
                     .font(.caption).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
