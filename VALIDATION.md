@@ -2,6 +2,8 @@
 
 Environment: Apple silicon, macOS 26.5.2, Swift 6.3.1, Command Line Tools (no full Xcode installation).
 
+This is a chronological record. Earlier entries describe earlier releases; see Version 1.3 below and `HANDOFF.md` for the current behavior and remaining limitations.
+
 Passed:
 
 - Debug and optimized release builds.

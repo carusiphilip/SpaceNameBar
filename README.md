@@ -2,6 +2,8 @@
 
 A small native macOS menu bar app that gives each desktop a name: **💬 Agent Runners**, **Documentation**, **Builds**, or whatever helps you find your place.
 
+For future development without the original chat, start with the [maintenance handoff](HANDOFF.md), [contributor instructions](AGENTS.md), and [validation record](VALIDATION.md).
+
 ## Use
 
 1. Open `SpaceNameBar.app` from your Applications folder.
